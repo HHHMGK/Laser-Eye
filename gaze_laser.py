@@ -13,6 +13,7 @@ import time
 from queue import Queue
 from threading import Thread
 import sys
+import math
 
 SIN_LEFT_THETA = 2 * sin(pi / 4)
 SIN_UP_THETA = sin(pi / 6)
@@ -62,36 +63,40 @@ def draw_sticker(src, offset, pupils, landmarks,
 
     left_eye_hight = landmarks[33, 1] - landmarks[40, 1]
     left_eye_width = landmarks[39, 0] - landmarks[35, 0]
+    left_iris_center = (landmarks[42, 0] + landmarks[45, 0]) / 2, (landmarks[42, 1] + landmarks[45, 1]) / 2
+    left_iris_radius = (landmarks[42, 0] - landmarks[45, 0]) / 2  # Assuming circular iris
 
     right_eye_hight = landmarks[87, 1] - landmarks[94, 1]
     right_eye_width = landmarks[93, 0] - landmarks[89, 0]
+    right_iris_center = (landmarks[90, 0] + landmarks[93, 0]) / 2, (landmarks[90, 1] + landmarks[93, 1]) / 2
+    right_iris_radius = (landmarks[90, 0] - landmarks[93, 0]) / 2
 
     for mark in landmarks.reshape(-1, 2).astype(int):
-        cv2.circle(src, tuple(mark), radius=1,
+        circle = cv2.circle(src, tuple(mark), radius=1,
                    color=(0, 0, 255), thickness=-1)
 
     if left_eye_hight / left_eye_width > blink_thd:
-        cv2.arrowedLine(src, tuple(pupils[0].astype(int)),
+            cv2.arrowedLine(src, tuple(pupils[0].astype(int)),      
                         tuple((offset+pupils[0]).astype(int)), arrow_color, 2)
 
     if right_eye_hight / right_eye_width > blink_thd:
-        cv2.arrowedLine(src, tuple(pupils[1].astype(int)),
-                        tuple((offset+pupils[1]).astype(int)), arrow_color, 2)
+            cv2.arrowedLine(src, tuple(pupils[1].astype(int)),
+                            tuple((offset+pupils[1]).astype(int)), arrow_color, 2)
 
     return src
 
 
 def main(video, gpu_ctx=-1):
-    cap = cv2.VideoCapture(video)
+    cap = cv2.VideoCapture(0)
 
-    fd = MxnetDetectionModel("weights/16and32", 0, .6, gpu=gpu_ctx)
+    fd = MxnetDetectionModel('weights/16and32', 0, .6, gpu=gpu_ctx)
     fa = CoordinateAlignmentModel('weights/2d106det', 0, gpu=gpu_ctx)
     gs = IrisLocalizationModel("weights/iris_landmark.tflite")
     hp = HeadPoseEstimator("weights/object_points.npy", cap.get(3), cap.get(4))
 
     while True:
         ret, frame = cap.read()
-
+        frame = cv2.flip(frame, 1)
         if not ret:
             break
 
@@ -109,6 +114,18 @@ def main(video, gpu_ctx=-1):
             
             # eye_lengths = np.linalg.norm(landmarks[[39, 93]] - landmarks[[35, 89]], axis=1)
             eye_lengths = (landmarks[[39, 93]] - landmarks[[35, 89]])[:, 0]
+            left_eye_hight = landmarks[33, 1] - landmarks[40, 1]
+            left_eye_width = landmarks[39, 0] - landmarks[35, 0]
+
+            right_eye_hight = landmarks[87, 1] - landmarks[94, 1]
+            right_eye_width = landmarks[93, 0] - landmarks[89, 0]
+
+            S_left_eye = math.pi * left_eye_hight * left_eye_width
+            s_right_eye = math.pi * right_eye_hight * right_eye_width
+
+            eye_centers_left = left_eye_width / 2
+            eye_center_right = right_eye_width / 2
+
 
             iris_left = gs.get_mesh(frame, eye_lengths[0], eye_centers[0])
             pupil_left, _ = gs.draw_pupil(iris_left, frame, thickness=1)
@@ -155,13 +172,24 @@ def main(video, gpu_ctx=-1):
 
             draw_sticker(frame, offset, pupils, landmarks)
 
-        # cv2.imshow('res', cv2.resize(frame, (960, 540)))
+        cv2.imshow('res', cv2.resize(frame, (960, 540)))
+        #Show landmark numbers
+#   for i, landmark in enumerate(landmarks):
+    #      cv2.putText(frame, str(i), tuple(landmark.astype(int)), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1, cv2.LINE_AA)
+        
+        # Show landmark numbers for iris left, iris right, pupil left, pupil right, eye length, and gaze
+
+        cv2.putText(frame, "Left Eye S: " + str(S_left_eye), (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
+        cv2.putText(frame, "Right Eye S: " + str(s_right_eye), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
+        cv2.putText(frame, "Eye Length: " + str(eye_lengths), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
+
+        cv2.putText(frame, "Gaze: " + str(delta.T), (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
         cv2.imshow('res', frame)
-        if cv2.waitKey(0) == ord('q'):
+        if cv2.waitKey(1) == ord('q'):
             break
 
     cap.release()
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[0])
